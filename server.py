@@ -86,12 +86,14 @@ def prepare_file(file_path):
 
     try:
         with open(file_path, 'rb') as f_in:
-            for i in tqdm(range(chunk_count), desc="Preparing & Encrypting File", unit="chunk", ncols=100):
-                chunk_data = f_in.read(CHUNK_SIZE)
-                encrypted_data = cipher.encrypt(chunk_data)
-                chunk_filename = os.path.join(output_dir, f'chunk_{i}')
-                with open(chunk_filename, 'wb') as f_out:
-                    f_out.write(encrypted_data)
+            with tqdm(total=total_size, desc="Preparing & Encrypting File", unit='B', unit_scale=True, unit_divisor=1024, ncols=100) as pbar:
+                for i in range(chunk_count):
+                    chunk_data = f_in.read(CHUNK_SIZE)
+                    encrypted_data = cipher.encrypt(chunk_data)
+                    chunk_filename = os.path.join(output_dir, f'chunk_{i}')
+                    with open(chunk_filename, 'wb') as f_out:
+                        f_out.write(encrypted_data)
+                    pbar.update(len(chunk_data))
         logging.info("File preparation and encryption complete.")
         return file_id, key
     except Exception as e:

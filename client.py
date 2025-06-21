@@ -88,7 +88,7 @@ def chunk_worker(server_ip, port, key, temp_dir, log_path, chunk_queue, pbar):
                     with open(log_path, 'a') as f_log:
                         f_log.write(f"{chunk_num}\n")
 
-                    pbar.update(1)
+                    pbar.update(len(decrypted_data))
                 except Exception as e:
                     logging.error(f"Failed to process chunk {chunk_num}: {e}. Leaving for retry on next run.")
                 finally:
@@ -127,8 +127,9 @@ def download_file(server_ip, port, key, max_workers=10):
         total_chunks = metadata['total_chunks']
         total_size = metadata['total_size']
         server_checksum = metadata['sha256_checksum']
-        
-        logging.info(f"Starting download of '{original_filename}' ({total_chunks} chunks).")
+        chunk_size = metadata.get('chunk_size', 4 * 1024 * 1024) # Fallback for older servers
+
+        logging.info(f"Starting download of '{original_filename}' ({total_size / (1024*1024):.2f} MB, {total_chunks} chunks).")
         logging.info(f"Expected SHA256: {server_checksum}")
 
         temp_dir = os.path.join(DOWNLOAD_DIR, f"{original_filename}{TEMP_DIR_SUFFIX}")
@@ -153,22 +154,34 @@ def download_file(server_ip, port, key, max_workers=10):
         if existing_chunks:
             logging.info(f"Found {len(existing_chunks)} completed chunks in log. Resuming download.")
 
+        # --- Calculate size of existing chunks for progress bar ---
+        size_of_existing_chunks = 0
+        if existing_chunks:
+            last_chunk_index = total_chunks - 1
+            # This calculation is robust even if total_size is a multiple of chunk_size
+            last_chunk_size = total_size - (last_chunk_index * chunk_size)
+            for chunk_index in existing_chunks:
+                if chunk_index == last_chunk_index:
+                    size_of_existing_chunks += last_chunk_size
+                else:
+                    size_of_existing_chunks += chunk_size
+
         chunks_to_download = [i for i in range(total_chunks) if i not in existing_chunks]
 
         if not chunks_to_download:
             logging.info("All chunks already present according to log.")
         else:
             logging.info(f"Requesting {len(chunks_to_download)} missing chunks using {max_workers} workers.")
-            
+
             chunk_queue = queue.Queue()
             for i in chunks_to_download:
                 chunk_queue.put(i)
 
-            with tqdm(total=len(chunks_to_download), desc="Downloading Chunks") as pbar:
+            with tqdm(total=total_size, initial=size_of_existing_chunks, unit='B', unit_scale=True, unit_divisor=1024, desc=f"Downloading '{original_filename}'", ncols=100) as pbar:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                     for _ in range(max_workers):
                         executor.submit(chunk_worker, server_ip, port, key, temp_dir, log_path, chunk_queue, pbar)
-                    
+
                     chunk_queue.join() # Blocks until all tasks in the queue are processed
 
         # --- Verification after download attempt ---
